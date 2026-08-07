@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>DEMOjudge</title>
+<link rel="stylesheet" href="/oj.css">
+</head>
+<body>
+
+<input type="radio" name="page" id="page-entry" checked>
+<input type="radio" name="page" id="page-phases">
+<input type="radio" name="page" id="page-events">
+<input type="radio" name="page" id="page-views">
+
+<nav>
+  <label for="page-entry">entry</label>
+  <label for="page-phases">phases</label>
+  <label for="page-events">events</label>
+  <label for="page-views">views</label>
+</nav>
+
+<main>
+
+<section id="phases">
+
+  <ol id="path">
+
+    <li class="phase" id="p-queued">
+      <details name="phase">
+        <summary>queued</summary>
+        <div class="panel">
+<pre data-lang="TLA+" data-from="spec/DEMOjudge.tla#SubmissionReceived">SubmissionReceived(s) ==
+    /\ s \notin received
+    /\ received' = received \cup {s}
+    /\ queued' = queued \cup {s}
+    /\ UNCHANGED &lt;&lt;leased, lease, attempts, allowances, judgments, escalated&gt;&gt;</pre>
+        </div>
+      </details>
+      <ul class="submissions"></ul>
+    </li>
+
+    <li class="phase" id="p-compiling">
+      <details name="phase">
+        <summary>compiling</summary>
+        <div class="panel">
+<pre data-lang="gleam" data-from="src/domain/submission/attempt.gleam#Compiling,lease()">pub opaque type Compiling {
+  Compiling(submission: Submission, attempt: Int, worst: Verdict)
+}
+
+pub fn lease(submission: Submission, attempt: Int) -&gt; Compiling</pre>
+<pre data-lang="TLA+" data-from="spec/DEMOjudge.tla#AttemptLeased">AttemptLeased(j, s) ==
+    /\ lease[j] = NoLease
+    /\ s \in queued
+    /\ s \notin leased
+    /\ attempts[s] &lt; allowances[s]
+    /\ leased' = leased \cup {s}
+    /\ attempts' = [attempts EXCEPT ![s] = @ + 1]
+    /\ lease' = [lease EXCEPT ![j] =
+                    [submission |-&gt; s, attempt |-&gt; attempts[s] + 1, phase |-&gt; "compiling", worst |-&gt; "AC"]]
+    /\ UNCHANGED &lt;&lt;received, queued, allowances, judgments, escalated&gt;&gt;</pre>
+        </div>
+      </details>
+      <button class="trap" value="compiling"></button>
+      <ul class="submissions"></ul>
+    </li>
+
+    <li class="phase" id="p-running">
+      <details name="phase">
+        <summary>running</summary>
+        <div class="panel">
+<pre data-lang="gleam" data-from="src/domain/submission/attempt.gleam#Running,compiling_case(),running_case()">pub opaque type Running {
+  Running(submission: Submission, attempt: Int, worst: Verdict)
+}
+
+pub fn compiling_case(compiling: Compiling, v: Verdict) -&gt; Running
+pub fn running_case(running: Running, v: Verdict) -&gt; Running</pre>
+<pre data-lang="TLA+" data-from="spec/DEMOjudge.tla#TestCaseJudged,Worse,Severity">TestCaseJudged(j, v) ==
+    /\ lease[j] # NoLease
+    /\ lease[j].phase \in {"compiling", "running"}
+    /\ v \in CaseVerdict
+    /\ lease' = [lease EXCEPT ![j].phase = "running", ![j].worst = Worse(@, v)]
+    /\ UNCHANGED &lt;&lt;received, queued, leased, attempts, allowances, judgments, escalated&gt;&gt;
+
+Worse(a, b) == IF Severity(a) &gt;= Severity(b) THEN a ELSE b
+
+Severity(v) ==
+    CASE v = "AC"  -&gt; 0
+      [] v = "WA"  -&gt; 1
+      [] v = "TLE" -&gt; 2
+      [] v = "MLE" -&gt; 3
+      [] v = "RE"  -&gt; 4
+      [] v = "CE"  -&gt; 5</pre>
+        </div>
+      </details>
+      <button class="trap" value="running"></button>
+      <ul class="submissions"></ul>
+    </li>
+
+    <li class="phase" id="p-completed">
+      <details name="phase">
+        <summary>completed</summary>
+        <div class="panel">
+<pre data-lang="gleam" data-from="src/domain/submission/attempt.gleam#Completed,running_complete(),ce_complete()">pub opaque type Completed {
+  Completed(submission: Submission, attempt: Int, worst: Verdict)
+}
+
+pub fn running_complete(running: Running) -&gt; Completed
+pub fn ce_complete(ce: CE) -&gt; Completed</pre>
+<pre data-lang="TLA+" data-from="spec/DEMOjudge.tla#JudgmentCompleted">JudgmentCompleted(j, v) ==
+    /\ lease[j] # NoLease
+    /\ lease[j].phase # "compiling"
+    /\ v = lease[j].worst
+    /\ queued' = queued \ {lease[j].submission}
+    /\ leased' = leased \ {lease[j].submission}
+    /\ judgments' = Append(judgments, [submission |-&gt; lease[j].submission, attempt |-&gt; lease[j].attempt, verdict |-&gt; v])
+    /\ lease' = [lease EXCEPT ![j] = NoLease]
+    /\ UNCHANGED &lt;&lt;received, attempts, allowances, escalated&gt;&gt;</pre>
+<pre data-lang="TLA+" data-from="spec/DEMOjudge.tla#HasVerdict,Terminal,NoLoss,Progress">HasVerdict(s) == \E i \in 1..Len(judgments) : judgments[i].submission = s
+Terminal(s) == HasVerdict(s) \/ s \in escalated
+NoLoss == \A s \in received : s \in queued \/ Terminal(s)
+Progress == \A s \in Submission : (s \in received) ~&gt; Terminal(s)</pre>
+        </div>
+      </details>
+      <ul class="submissions"></ul>
+    </li>
+
+  </ol>
+
+  <ul id="exits">
+
+    <li class="phase exit" id="p-escalated">
+      <details name="phase">
+        <summary>escalated</summary>
+        <div class="panel">
+<pre data-lang="TLA+" data-from="spec/DEMOjudge.tla#SubmissionEscalated">SubmissionEscalated(s) ==
+    /\ s \in queued
+    /\ s \notin leased
+    /\ attempts[s] = allowances[s]
+    /\ queued' = queued \ {s}
+    /\ escalated' = escalated \cup {s}
+    /\ lease' = [j \in Runner |-&gt; IF lease[j].submission = s THEN NoLease ELSE lease[j]]
+    /\ UNCHANGED &lt;&lt;received, leased, attempts, allowances, judgments&gt;&gt;</pre>
+        </div>
+      </details>
+      <ul class="submissions"></ul>
+    </li>
+
+    <li class="phase exit" id="p-ce">
+      <details name="phase">
+        <summary>compile error</summary>
+        <div class="panel">
+<pre data-lang="gleam" data-from="src/domain/submission/attempt.gleam#CE,compiling_compile_error()">pub opaque type CE {
+  CE(submission: Submission, attempt: Int, worst: Verdict)
+}
+
+pub fn compiling_compile_error(compiling: Compiling) -&gt; CE</pre>
+<pre data-lang="TLA+" data-from="spec/DEMOjudge.tla#CompilationFailed">CompilationFailed(j) ==
+    /\ lease[j] # NoLease
+    /\ lease[j].phase = "compiling"
+    /\ lease' = [lease EXCEPT ![j].phase = "ce", ![j].worst = Worse(@, "CE")]
+    /\ UNCHANGED &lt;&lt;received, queued, leased, attempts, allowances, judgments, escalated&gt;&gt;</pre>
+        </div>
+      </details>
+      <ul class="submissions"></ul>
+    </li>
+
+  </ul>
+
+</section>
+
+<section id="events">
+
+  <details id="conformance">
+    <summary>conformance</summary>
+    <div class="panel">
+      <table id="mapping">
+        <thead>
+          <tr><th>variable<th>definition<th>value</tr>
+        </thead>
+        <tbody data-from="CONFORMANCE.md#received,queued,leased,lease,attempts,allowances,judgments,escalated">
+<tr><td>received<td>Received(L) == { L[i].submission : i \in 1..Len(L) /\ L[i].type = "SubmissionReceived" }<td></tr>
+<tr><td>queued<td>Queued(L) == { s \in Received(L) : LastClosing(L, s).type \in {"SubmissionReceived", "EscalationResolved"} }<td></tr>
+<tr><td>leased<td>Leased(L) == { s \in Received(L) : Held(L, s) # NoLease }<td></tr>
+<tr><td>lease<td>Lease(L) == [ j \in Runner |-&gt; IF ... THEN Held(L, s) ELSE NoLease ]<td></tr>
+<tr><td>attempts<td>Attempts(L) == [ s \in Received(L) |-&gt; MaxOf({ e.attempt : e \in { f \in Lines(L, s) : f.type \in Judging } } \cup {0}) ]<td></tr>
+<tr><td>allowances<td>Allowances(L) == [ s \in Received(L) |-&gt; MaxAttempts * (1 + Card({ e \in Lines(L, s) : e.type = "EscalationResolved" })) ]<td></tr>
+<tr><td>judgments<td>Judgments(L) == ...<td></tr>
+<tr><td>escalated<td>Escalated(L) == { s \in Received(L) : LastClosing(L, s).type = "SubmissionEscalated" }<td></tr>
+</tbody>
+      </table>
+    </div>
+  </details>
+
+  <div class="frame">
+    <table id="tape">
+      <tbody></tbody>
+    </table>
+  </div>
+
+</section>
+
+<section id="views">
+
+  <div class="frame">
+    <table id="leases">
+      <caption>leases</caption>
+      <thead>
+        <tr><th>runner<th>host<th>state</tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="frame">
+    <table id="standings">
+    <caption>
+      <details>
+        <summary>standings</summary>
+        <div class="panel">
+<pre data-lang="gleam" data-from="src/app/view/standings.gleam#State,initial,evolve">pub type State {
+  State(verdict: Dict(Submission, #(Int, Verdict)))
+}
+
+pub fn initial() -&gt; State {
+  State(verdict: dict.new())
+}
+
+pub fn evolve(s: State, e: Event) -&gt; State {
+  case e {
+    event.JudgmentCompleted(submission, a, v) -&gt;
+      case dict.get(s.verdict, submission) {
+        Ok(#(seen, _)) if seen &gt;= a -&gt; s
+        _ -&gt; State(verdict: dict.insert(s.verdict, submission, #(a, v)))
+      }
+    _ -&gt; s
+  }
+}</pre>
+<pre data-lang="gleam" data-from="src/app/view/standings.gleam#standings">pub fn standings(s: State) -&gt; List(Standing) {
+  let submissions = dict.keys(s.verdict)
+  let users =
+    list.unique(
+      list.map(submissions, fn(submission) { event.dimensions(submission).user }),
+    )
+  users
+  |&gt; list.map(fn(user) { score(s, submissions, user) })
+  |&gt; list.sort(by_rank)
+  |&gt; list.index_map(fn(row, i) {
+    let #(user, solved, penalty) = row
+    Standing(rank: i + 1, user:, solved:, penalty:)
+  })
+}</pre>
+        </div>
+      </details>
+    </caption>
+    <thead>
+      <tr><th>rank<th>user<th>solved<th>penalty</tr>
+    </thead>
+    <tbody></tbody>
+    </table>
+  </div>
+
+  <div class="frame">
+    <table id="escalations">
+    <caption>
+      <details>
+        <summary>escalations</summary>
+        <div class="panel">
+<pre data-lang="gleam" data-from="src/app/view/escalations.gleam#State,initial,evolve">pub type State {
+  State(escalated: Dict(Submission, Escalation))
+}
+
+pub fn initial() -&gt; State {
+  State(escalated: dict.new())
+}
+
+pub fn evolve(s: State, e: Event) -&gt; State {
+  case e {
+    event.SubmissionEscalated(submission, allowance, reason) -&gt;
+      State(escalated: dict.insert(
+        s.escalated,
+        submission,
+        Escalation(submission, allowance, reason),
+      ))
+    event.EscalationResolved(submission, _) -&gt;
+      State(escalated: dict.delete(s.escalated, submission))
+    _ -&gt; s
+  }
+}</pre>
+<pre data-lang="gleam" data-from="src/app/view/escalations.gleam#escalations">pub fn escalations(s: State) -&gt; List(Escalation) {
+  dict.keys(s.escalated)
+  |&gt; list.sort(string.compare)
+  |&gt; list.filter_map(fn(submission) { dict.get(s.escalated, submission) })
+}</pre>
+        </div>
+      </details>
+    </caption>
+    <thead>
+      <tr><th>submission<th>allowance<th>reason<th></tr>
+    </thead>
+    <tbody></tbody>
+    </table>
+  </div>
+
+  <form id="entry" method="post" action="/api/submit">
+    <h2>entry</h2>
+    <dl>
+      <dt><label for="user">user</label>
+      <dd><input id="user" name="user" value="alice">
+      <dt><label for="problem">problem</label>
+      <dd><select id="problem" name="problem">
+        <option value="a">a</option>
+        <option value="b">b</option>
+        <option value="c">c</option>
+      </select>
+<template id="source-a-ac" data-from="sources/a-ac">#include &lt;stdio.h&gt;
+
+int main(void) {
+    long long a, b;
+    scanf("%lld %lld", &amp;a, &amp;b);
+    printf("%lld\n", a + b);
+    return 0;
+}
+</template>
+<template id="source-c-ac" data-from="sources/c-ac">#include &lt;stdio.h&gt;
+
+int main(void) {
+    long long a, b;
+    scanf("%lld %lld", &amp;a, &amp;b);
+    long long best = 0;
+    for (long long n = a; n &lt;= b; n++) {
+        long long x = n;
+        long long steps = 0;
+        while (x != 1) {
+            x = x % 2 == 0 ? x / 2 : 3 * x + 1;
+            steps++;
+        }
+        if (steps &gt; best) {
+            best = steps;
+        }
+    }
+    printf("%lld\n", best);
+    return 0;
+}
+</template>
+      <dt><label for="source">source</label>
+      <dd><textarea id="source" name="source" rows="10" spellcheck="false"></textarea>
+    </dl>
+    <button>submit</button>
+  </form>
+
+</section>
+
+</main>
+
+<details id="authorize">
+  <summary>authorize</summary>
+  <div class="panel">
+    <p>authorize first.</p>
+<pre data-lang="gleam" data-from="src/ports/web.gleam#guarded">fn guarded(socket: Socket, token: String, run: fn() -&gt; Nil) -&gt; Nil {
+  let expected = os.getenv("OJ_TOKEN", "")
+  case expected != "" &amp;&amp; token == expected {
+    True -&gt; run()
+    False -&gt; answer(socket, 403, O([#("error", S("reject not-referee"))]))
+  }
+}</pre>
+  </div>
+</details>
+
+<script src="/oj.js"></script>
+<script type="module">
+import { createHighlighter } from "https://esm.run/shiki@4.3.1";
+const tla = await fetch("https://cdn.jsdelivr.net/gh/tlaplus/vscode-tlaplus@v2024.8.151650/languages/tlaplus-grammar.json").then((answer) => answer.json());
+tla.patterns = tla.repository.module.patterns;
+const shiki = await createHighlighter({ themes: ["light-plus"], langs: ["gleam", tla] });
+for (const block of [...document.querySelectorAll("pre[data-lang]")]) {
+  const drawn = document.createElement("template");
+  drawn.innerHTML = shiki.codeToHtml(block.textContent, { lang: block.dataset.lang, theme: "light-plus" });
+  drawn.content.firstElementChild.dataset.lang = block.dataset.lang;
+  block.replaceWith(drawn.content.firstElementChild);
+}
+</script>
+</body>
+</html>

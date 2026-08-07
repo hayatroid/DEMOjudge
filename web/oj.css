@@ -1,0 +1,393 @@
+:root {
+  --ink: #000;
+  --paper: #fff;
+  --fail: #c00;
+  --quiet: #666;
+
+  --mono: ui-monospace, "DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, monospace;
+
+  --type-fine: 22px;
+  --type-meta: 26px;
+  --type-name: 33px;
+  --type-loud: 40px;
+  --type-clock: 52px;
+
+  --rule: 3px;
+  --rule-band: 4px;
+
+  --layer-popup: 1;
+
+  --space-1: 8px;
+  --space-2: 14px;
+  --space-3: 20px;
+  --space-4: 26px;
+
+  /* A column has to hold its own name and one piece, and the band two columns; a
+     screen shorter than that is read down rather than crushed. */
+  --arrow: 44px;
+  --arrow-air: 6px;
+  --name-depth: 48px;
+  --submission-depth: 102px;
+  --column-depth: calc(var(--name-depth) + var(--space-3) + var(--submission-depth)
+                       + var(--space-2) * 2 + var(--rule) * 2);
+  --band-depth: calc(var(--column-depth) * 2 + var(--space-4)
+                     + var(--space-3) * 2);
+
+  --fade: 400ms;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: system-ui, -apple-system, "Segoe UI", "Noto Sans", sans-serif;
+  font-size: 28px;
+  line-height: 1.35;
+}
+
+body {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+/* A grid item is at least as wide as its content unless it is told otherwise, so
+   without these a row nobody has scrolled to would widen the page. */
+main, main > section {
+  min-width: 0;
+  min-height: 0;
+}
+
+main {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr);
+}
+
+summary {
+  cursor: pointer;
+  list-style: none;
+  display: inline-block;
+  font-size: var(--type-name);
+  font-weight: 600;
+  border-bottom: var(--rule) solid currentColor;
+}
+
+summary::-webkit-details-marker { display: none; }
+
+.frame {
+  height: max-content;
+  min-width: 0;
+  overflow-x: auto;
+}
+
+#phases {
+  padding: var(--space-3) var(--space-4);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+}
+
+#path, #exits {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: calc(var(--arrow) + var(--arrow-air) * 2);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-height: 0;
+}
+
+#path { flex: 1; min-height: var(--column-depth); }
+
+#exits { flex: none; height: var(--column-depth); }
+
+.phase {
+  position: relative;
+  border: var(--rule) solid var(--ink);
+  padding: var(--space-2);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-3);
+  min-height: 0;
+}
+
+.exit { border-style: dashed; }
+
+/* The arrow keeps --ink rather than the colour it inherits, so trapping a phase
+   does not redden the way out of it. */
+#path .phase:not(:last-child)::after {
+  content: "\2192";
+  position: absolute;
+  right: calc(-1 * (var(--arrow) + var(--arrow-air)));
+  top: var(--space-2);
+  width: var(--arrow);
+  text-align: center;
+  font-size: var(--type-loud);
+  line-height: 1;
+  color: var(--ink);
+}
+
+.phase.trapped {
+  border-color: var(--fail);
+  border-width: calc(var(--rule) * 2);
+  color: var(--fail);
+}
+
+.trap {
+  position: absolute;
+  right: var(--space-2);
+  top: var(--space-2);
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+.trap.set, .trap.fired, .trap:hover { border-color: var(--fail); }
+
+.trap.fired, .trap:hover { background: var(--fail); }
+
+.submissions {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-gutter: stable;
+}
+
+.submission {
+  position: relative;
+  border: var(--rule) solid var(--ink);
+  padding: var(--space-1) var(--space-2);
+  margin-bottom: var(--space-2);
+  font-family: var(--mono);
+  font-size: var(--type-name);
+  font-weight: 600;
+  background: var(--paper);
+}
+
+.submission small {
+  display: block;
+  font-size: var(--type-meta);
+  font-weight: 400;
+  color: var(--quiet);
+}
+
+.submission.dead { border-color: var(--fail); color: var(--fail); }
+.submission.dead small { color: var(--fail); }
+
+.submission .clock {
+  position: absolute;
+  right: var(--space-2);
+  top: var(--space-1);
+  font-size: var(--type-clock);
+  font-weight: 700;
+  color: var(--fail);
+  line-height: 1;
+}
+
+.word {
+  position: absolute;
+  left: var(--space-2);
+  bottom: var(--space-1);
+  margin: 0;
+  font-family: var(--mono);
+  font-size: var(--type-loud);
+  font-weight: 700;
+  color: var(--fail);
+  transition: opacity var(--fade);
+}
+
+.word.gone { opacity: 0; }
+
+#events {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+#tape td { font-size: var(--type-meta); color: var(--quiet); }
+
+#tape tr:first-child td { color: var(--ink); font-weight: 600; }
+
+#views {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: var(--space-4);
+  padding: var(--space-3) var(--space-4);
+}
+
+table { border-collapse: separate; border-spacing: 0; }
+
+caption, h2 {
+  margin: 0;
+  padding-bottom: var(--space-1);
+  font-size: var(--type-name);
+  font-weight: 600;
+  text-align: left;
+}
+
+th, td {
+  border-bottom: var(--rule) solid var(--ink);
+  padding: var(--space-2) var(--space-3);
+  text-align: left;
+}
+
+thead th { border-bottom: var(--rule-band) solid var(--ink); font-weight: 600; }
+
+/* The last cell of the escalations table holds the referee's button, not a field
+   the server named. */
+#tape td, #leases td, #standings td, #escalations td:not(:last-child) {
+  font-family: var(--mono);
+  white-space: nowrap;
+}
+
+#leases tr.dead td { color: var(--fail); }
+
+.hit { outline: var(--rule) solid var(--ink); outline-offset: calc(-1 * var(--rule)); }
+
+/* A panel is docked left because the way in sits bottom right, and a panel over
+   the button about to be pressed is a panel in the way. */
+.panel {
+  position: fixed;
+  z-index: var(--layer-popup);
+  left: calc(var(--space-4) * 2);
+  bottom: calc(var(--space-4) * 2);
+  font-weight: 400;
+  max-width: min(1420px, calc(100vw - var(--space-4) * 4));
+  max-height: 62vh;
+  overflow: auto;
+  background: var(--paper);
+  border: var(--rule) solid var(--ink);
+  padding: var(--space-3) var(--space-4);
+  box-shadow: var(--space-2) var(--space-2) 0 color-mix(in srgb, var(--ink) 12%, transparent);
+}
+
+pre {
+  margin: 0 0 var(--space-2);
+  font-family: var(--mono);
+  font-size: var(--type-fine);
+  line-height: 1.4;
+  white-space: pre;
+}
+
+pre:last-of-type { margin-bottom: 0; }
+
+pre code { font: inherit; }
+
+#mapping td {
+  font-family: var(--mono);
+  font-size: var(--type-fine);
+  white-space: pre-wrap;
+  vertical-align: top;
+}
+
+button {
+  font: inherit;
+  padding: var(--space-1) var(--space-4);
+  background: var(--paper);
+  color: var(--ink);
+  border: var(--rule) solid var(--ink);
+  cursor: pointer;
+}
+
+button:hover { background: var(--ink); color: var(--paper); }
+
+#entry { width: 1100px; max-width: 100%; }
+
+#entry dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: var(--space-1) var(--space-2);
+  align-items: start;
+}
+
+#entry dt { margin: 0; padding-top: var(--space-1); }
+#entry dd { margin: 0; }
+
+input, select, textarea {
+  font-family: var(--mono);
+  font-size: var(--type-meta);
+  width: 100%;
+  padding: var(--space-1);
+  border: var(--rule) solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+}
+
+/* The operating system draws a select in neither this type nor this palette
+   unless it is told not to draw it at all. */
+select { appearance: none; }
+
+textarea { font-size: var(--type-fine); resize: vertical; }
+
+#entry button { margin-top: var(--space-2); }
+
+input[name="page"] {
+  position: absolute;
+  width: 0;
+  height: 0;
+  opacity: 0;
+}
+
+nav {
+  display: flex;
+  gap: var(--space-4);
+  padding: var(--space-1) var(--space-4);
+  border-bottom: var(--rule-band) solid var(--ink);
+}
+
+nav label {
+  cursor: pointer;
+  padding: 0 var(--space-1);
+  font-size: var(--type-name);
+  font-weight: 600;
+  border-bottom: var(--rule) solid currentColor;
+}
+
+#page-entry:checked  ~ nav label[for="page-entry"],
+#page-phases:checked ~ nav label[for="page-phases"],
+#page-events:checked ~ nav label[for="page-events"],
+#page-views:checked  ~ nav label[for="page-views"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+main > #phases, main > #events, main > #views { display: none; }
+
+#page-entry:checked  ~ main > #views  { display: grid; }
+#page-phases:checked ~ main > #phases { display: flex; }
+#page-events:checked ~ main > #events { display: grid; }
+#page-views:checked  ~ main > #views  { display: grid; }
+
+#page-phases:checked ~ main {
+  height: 100%;
+  grid-template-rows: minmax(var(--band-depth), 1fr);
+  overflow-y: auto;
+}
+
+#views > * { display: none; }
+
+#page-entry:checked ~ main #entry { display: block; }
+
+#page-views:checked ~ main #views .frame { display: block; }
+
+/* Nothing opens authorize by hand: it is opened where a press is refused, so its
+   summary is no click target. */
+#authorize > summary { display: none; }
+
+.panel p { margin: 0 0 var(--space-2); font-size: var(--type-fine); }
+
+.panel pre[data-lang]::before {
+  content: attr(data-lang);
+  display: block;
+  margin-bottom: var(--space-1);
+  font-size: var(--type-fine);
+  color: var(--quiet);
+}
