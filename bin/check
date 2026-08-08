@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+
+die() {
+    echo "${0##*/}: $*" >&2
+    exit 1
+}
+
+type -P gleam tlc shellcheck shfmt ruff > /dev/null \
+    || exec nix develop "$root" --command "$0" "$@"
+cd "$root"
+
+sh() {
+    shfmt -i 4 -ci -sr -bn -d bin/check bin/ready bin/reset bin/ship bin/stage
+    shellcheck -s bash bin/check bin/ready bin/reset bin/ship bin/stage
+    sed -e 's/%{[^}]*}//g' -e 's/\${[a-z_]*}/X/g' aws/node.sh.tftpl \
+        | shellcheck -s bash -
+}
+py() {
+    ruff check web/gen.py
+    python3 web/gen.py --check
+}
+tf() {
+    [[ -d aws/.terraform ]] || terraform -chdir=aws init -backend=false -input=false > /dev/null
+    terraform -chdir=aws fmt -check
+    terraform -chdir=aws validate -no-color > /dev/null
+}
+build() {
+    gleam build
+}
+spec() (
+    rm -rf var/spec
+    mkdir -p var/spec
+    cp -r spec/. var/spec
+    cd var/spec
+    for cfg in *.cfg; do
+        out=${cfg%.cfg}.out
+        tlc -workers auto -config "$cfg" "${cfg%.cfg}.tla" > "$out" 2>&1 || true
+        grep -q 'No error has been found' "$out" || die "$cfg is red (var/spec/$out)"
+        grep -qE '[1-9][0-9,]* distinct states found' "$out" || die "$cfg explored nothing (var/spec/$out)"
+    done
+)
+
+case ${1:-all} in
+    sh) sh ;;
+    py) py ;;
+    tf) tf ;;
+    build) build ;;
+    spec) spec ;;
+    all)
+        sh
+        py
+        tf
+        build
+        spec
+        ;;
+    *) die "usage: ${0##*/} [sh|py|tf|build|spec]" ;;
+esac

@@ -18,6 +18,10 @@
             pkgs.erlang_27
             pkgs.beam27Packages.rebar3
             pkgs.tlaplus
+            pkgs.python3
+            pkgs.ruff
+            pkgs.shellcheck
+            pkgs.shfmt
           ];
         };
       });

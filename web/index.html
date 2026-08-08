@@ -178,15 +178,15 @@ pub fn compiling_compile_error(compiling: Compiling) -&gt; CE</pre>
         <thead>
           <tr><th>variable<th>definition<th>value</tr>
         </thead>
-        <tbody data-from="CONFORMANCE.md#received,queued,leased,lease,attempts,allowances,judgments,escalated">
-<tr><td>received<td>Received(L) == { L[i].submission : i \in 1..Len(L) /\ L[i].type = "SubmissionReceived" }<td></tr>
-<tr><td>queued<td>Queued(L) == { s \in Received(L) : LastClosing(L, s).type \in {"SubmissionReceived", "EscalationResolved"} }<td></tr>
+        <tbody data-from="spec/Conformance.tla#received,queued,leased,lease,attempts,allowances,judgments,escalated">
+<tr><td>received<td>Received(L) == { e.submission : e \in { f \in Range(L) : f.type = "SubmissionReceived" } }<td></tr>
+<tr><td>queued<td>Queued(L) == { s \in Received(L) : LastSettling(L, s).type \in {"SubmissionReceived", "EscalationResolved"} }<td></tr>
 <tr><td>leased<td>Leased(L) == { s \in Received(L) : Held(L, s) # NoLease }<td></tr>
-<tr><td>lease<td>Lease(L) == [ j \in Runner |-&gt; IF ... THEN Held(L, s) ELSE NoLease ]<td></tr>
-<tr><td>attempts<td>Attempts(L) == [ s \in Received(L) |-&gt; MaxOf({ e.attempt : e \in { f \in Lines(L, s) : f.type \in Judging } } \cup {0}) ]<td></tr>
-<tr><td>allowances<td>Allowances(L) == [ s \in Received(L) |-&gt; MaxAttempts * (1 + Card({ e \in Lines(L, s) : e.type = "EscalationResolved" })) ]<td></tr>
-<tr><td>judgments<td>Judgments(L) == ...<td></tr>
-<tr><td>escalated<td>Escalated(L) == { s \in Received(L) : LastClosing(L, s).type = "SubmissionEscalated" }<td></tr>
+<tr><td>lease<td>Lease(L) == [ j \in Runner |-&gt; IF \E s \in Leased(L) : Holder(L, s) = j THEN Held(L, CHOOSE s \in Leased(L) : Holder(L, s) = j) ELSE NoLease ]<td></tr>
+<tr><td>attempts<td>Attempts(L) == [ s \in Received(L) |-&gt; MaxOf({ e.attempt : e \in { f \in Range(Lines(L, s)) : f.type \in Judging } } \cup {0}) ]<td></tr>
+<tr><td>allowances<td>Allowances(L) == [ s \in Received(L) |-&gt; MaxAttempts * (1 + Cardinality({ e \in Range(Lines(L, s)) : e.type = "EscalationResolved" })) ]<td></tr>
+<tr><td>judgments<td>Judgments(L) == LET q == SelectSeq(L, LAMBDA e : e.type = "JudgmentCompleted") IN [ i \in 1..Len(q) |-&gt; [submission |-&gt; q[i].submission, attempt |-&gt; q[i].attempt, verdict |-&gt; q[i].five] ]<td></tr>
+<tr><td>escalated<td>Escalated(L) == { s \in Received(L) : LastSettling(L, s).type = "SubmissionEscalated" }<td></tr>
 </tbody>
       </table>
     </div>

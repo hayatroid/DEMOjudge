@@ -1,0 +1,20 @@
+name: check
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - uses: actions/cache@v6
+        with:
+          path: aws/.terraform
+          key: terraform-${{ hashFiles('aws/.terraform.lock.hcl') }}
+      - run: bin/check sh
+      - run: bin/check py
+      - run: bin/check tf
+      - run: bin/check build
+      - run: bin/check spec
