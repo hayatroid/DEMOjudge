@@ -1,0 +1,31 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+work=$root/var/spec
+
+if ! command -v tlc > /dev/null 2>&1; then
+    exec nix develop "$root" --command "$0"
+fi
+
+fail() { echo "FAIL $*" >&2; exit 1; }
+
+# TLC writes its states directory beside the module it reads, so it reads a copy
+# and spec/ does not move a byte.
+rm -rf "$work"
+mkdir -p "$work"
+cp -r "$root/spec/." "$work"
+cd "$work"
+
+cfgs=(*.cfg)
+for cfg in "${cfgs[@]}"; do
+    out=$work/${cfg%.cfg}.out
+    tlc -workers 4 -config "$cfg" DEMOjudge.tla > "$out" 2>&1 || true
+    grep -q 'No error has been found' "$out" || fail "$cfg is red ($out)"
+    # A run that reports no distinct state count explored nothing, and green over
+    # an empty search is not green.
+    states=$(grep -oE '[1-9][0-9,]* distinct states found' "$out" | tail -1) \
+        || fail "$cfg reports no distinct states ($out)"
+    echo "green $cfg ($states)"
+done
+
+echo "PASS the model is green at ${#cfgs[@]} widths"

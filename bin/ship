@@ -1,0 +1,38 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+
+die() {
+    echo "${0##*/}: $*" >&2
+    exit 1
+}
+
+[[ $# -eq 0 ]] || die "takes no arguments"
+
+type -P gleam rebar3 erl > /dev/null || exec nix develop "$root" --command "$0"
+cd "$root"
+
+python3 web/gen.py --check
+
+export ERL_COMPILER_OPTIONS=deterministic
+rm -rf build/prod build/ship
+gleam export erlang-shipment
+
+mkdir -p build/ship/bin
+cp -r build/erlang-shipment build/ship/lib
+rm -f build/ship/lib/entrypoint.*
+cp -r web problems build/ship/
+
+cat > build/ship/bin/run << 'EOF'
+#!/bin/sh
+root=$(cd "$(dirname "$0")/.." && pwd)
+exec erl -noshell -pa "$root"/lib/*/ebin -eval 'oj:main()' -extra run
+EOF
+chmod +x build/ship/bin/run
+
+{
+    find src problems -type f -print0
+    find web -maxdepth 1 -type f -print0
+    printf '%s\0' gleam.toml manifest.toml
+} | LC_ALL=C sort -z | xargs -0 sha256sum | awk '{printf "%s", $1}' | sha256sum | cut -c1-64 \
+    > build/ship/STAMP

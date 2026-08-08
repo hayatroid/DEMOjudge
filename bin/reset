@@ -1,0 +1,97 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+
+die() {
+    echo "${0##*/}: $*" >&2
+    exit 1
+}
+out() {
+    terraform -chdir="$root/aws" output -raw "$1" || die "terraform output $1 failed"
+}
+fleet() {
+    aws ec2 describe-instances \
+        --filters "Name=tag:Name,Values=$1" 'Name=instance-state-name,Values=running' \
+        --query "Reservations[].Instances[].$2" --output text
+}
+
+[[ $# -eq 0 ]] || die "takes no arguments"
+
+table=${OJ_TABLE:-$(out table)}
+AWS_REGION=${AWS_REGION:-$(out region)}
+export AWS_REGION
+
+standing=$(fleet oj-worker,oj-control InstanceId)
+read -ra boxes <<< "$standing"
+[[ ${#boxes[@]} -gt 0 ]] || die "no running box tagged oj-worker or oj-control in $AWS_REGION"
+
+mouth=$(fleet oj-control PublicIpAddress)
+[[ -n $mouth ]] || die "no running box tagged oj-control in $AWS_REGION"
+base=http://$mouth:8080
+
+ask() { curl -sf --max-time 5 "$base/api/$1" || die "$base/api/$1 did not answer"; }
+empty() {
+    local seen
+    seen=$(ask "$1")
+    [[ $seen = "$2" ]] || die "$mouth serves $1 = $seen"
+}
+oj() {
+    local id box
+    id=$(aws ssm send-command --instance-ids "${boxes[@]}" --document-name AWS-RunShellScript \
+        --parameters "commands=systemctl $1 oj" --query 'Command.CommandId' --output text) \
+        || die "ssm send-command failed for ${boxes[*]}"
+    for box in "${boxes[@]}"; do
+        aws ssm wait command-executed --command-id "$id" --instance-id "$box" \
+            || die "systemctl $1 oj on $box ($id): $(aws ssm get-command-invocation \
+                --command-id "$id" --instance-id "$box" --query StatusDetails --output text)"
+    done
+}
+
+oj stop
+
+python3 - "$table" << 'PY' || die "the wipe of $table failed"
+import json
+import subprocess
+import sys
+import time
+from concurrent.futures import ThreadPoolExecutor
+
+table = sys.argv[1]
+
+
+def aws(*args):
+    return json.loads(subprocess.check_output(
+        ["aws", "dynamodb", *args, "--output", "json"], text=True))
+
+
+def drop(chunk):
+    left = {table: [{"DeleteRequest": {"Key": key}} for key in chunk]}
+    while left:
+        answer = aws("batch-write-item", "--request-items", json.dumps(left))
+        left = answer.get("UnprocessedItems")
+        time.sleep(0.2)
+
+
+keys = aws("scan", "--table-name", table, "--projection-expression", "pk,sk")["Items"]
+with ThreadPoolExecutor(max_workers=16) as pool:
+    list(pool.map(drop, [keys[i:i + 25] for i in range(0, len(keys), 25)]))
+PY
+
+oj start
+
+answered=""
+for _ in {1..120}; do
+    if curl -sf -o /dev/null --max-time 3 "$base/"; then
+        answered=1
+        break
+    fi
+    sleep 1
+done
+[[ -n $answered ]] || die "the mouth did not answer"
+
+left=$(aws dynamodb scan --table-name "$table" --projection-expression pk,sk \
+    --query 'length(Items)' --output text)
+[[ $left = 0 ]] || die "$left items are still in $table"
+empty standings '[]'
+empty escalations '[]'
+empty phases '{}'

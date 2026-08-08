@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+root=$(cd "$(dirname "$0")/.." && pwd)
+
+bad=0
+die() {
+    echo "${0##*/}: $*" >&2
+    exit 1
+}
+have() { type -P "$@" > /dev/null; }
+ok() { echo "ok   $*" >&2; }
+no() {
+    echo "no   $1" >&2
+    echo "     $2" >&2
+    bad=1
+}
+
+[[ $# -eq 0 ]] || die "takes no arguments"
+
+if have gleam rebar3 erl; then
+    ok "gleam, rebar3, erl"
+elif have nix && nix config show experimental-features 2> /dev/null | grep -q flakes; then
+    ok "nix"
+else
+    no "bin/ship cannot build here" "install nix (https://nixos.org/download), or put gleam, rebar3 and erl on PATH"
+fi
+
+while IFS='|' read -r one fix; do
+    if have "$one"; then ok "$one"; else no "$one is missing" "$fix"; fi
+done << 'EOF'
+terraform|https://developer.hashicorp.com/terraform/install
+aws|https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html
+curl|your package manager
+python3|your package manager
+base64|your package manager
+EOF
+
+region=$(awk '/^variable "region"/, /^}/ { if ($1 == "default") { gsub(/"/, "", $3); print $3 } }' "$root/aws/main.tf")
+[[ -n $region ]] || die "could not read a default region out of aws/main.tf"
+region=${TF_VAR_region:-$region}
+if [[ -n ${AWS_REGION:-} && $AWS_REGION != "$region" ]]; then
+    echo "note AWS_REGION=$AWS_REGION overrides $region; apply with -var region=$AWS_REGION" >&2
+    region=$AWS_REGION
+fi
+
+if who=$(aws sts get-caller-identity --query Arn --output text 2> /dev/null); then
+    ok "credentials: $who"
+
+    if why=$(aws ec2 describe-availability-zones --region "$region" 2>&1); then
+        ok "region $region answers"
+    else
+        no "region $region does not answer" "$why"
+    fi
+
+    if vpc=$(aws ec2 describe-vpcs --region "$region" --filters Name=isDefault,Values=true \
+        --query 'Vpcs[0].VpcId' --output text 2>&1); then
+        if [[ $vpc == vpc-* ]]; then
+            ok "default vpc $vpc"
+            igw=$(aws ec2 describe-internet-gateways --region "$region" \
+                --filters "Name=attachment.vpc-id,Values=$vpc" \
+                --query 'InternetGateways[0].InternetGatewayId' --output text 2> /dev/null)
+            if [[ $igw == igw-* ]]; then
+                ok "internet gateway $igw"
+            else
+                no "the default vpc has no internet gateway" "delete the vpc, then aws ec2 create-default-vpc --region $region"
+            fi
+        else
+            no "no default vpc in $region" "aws ec2 create-default-vpc --region $region"
+        fi
+    else
+        no "ec2 describe-vpcs failed in $region" "$vpc"
+    fi
+else
+    no "no live credentials" "aws sso login, or aws configure, or set AWS_PROFILE to one that is logged in"
+fi
+
+[[ $bad = 0 ]] || die "fix the lines above"
+
+cat << 'EOF'
+
+    bin/ship
+    terraform -chdir=aws init
+    terraform -chdir=aws apply
+    api=$(terraform -chdir=aws output -raw api_url)
+    until curl -sf "$api/" > /dev/null; do sleep 10; done    # a box's serial console shows boot.log
+    bin/stage
+    terraform -chdir=aws destroy
+EOF
