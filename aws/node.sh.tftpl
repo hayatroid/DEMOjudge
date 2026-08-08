@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+cat > /etc/systemd/system/oj-selfdestruct.service << 'EOF'
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/shutdown -h +${minutes}
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now oj-selfdestruct.service
+
+mkdir -p /etc/cloud/cloud.cfg.d
+cat > /etc/cloud/cloud.cfg.d/99-oj-imds-ipv4.cfg << 'EOF'
+datasource:
+  Ec2:
+    metadata_urls: ["http://169.254.169.254"]
+EOF
+
+set -x
+export DEBIAN_FRONTEND=noninteractive
+
+fail=/var/log/oj-fail.log
+: > "$fail"
+note() { echo "$*" >> "$fail"; }
+
+apt_get() {
+    apt-get -o DPkg::Lock::Timeout=900 -o Acquire::Retries=5 -y "$@"
+}
+
+apt_install() {
+    for p in "$@"; do
+        apt_get install "$p" || note "apt $p"
+    done
+}
+
+fetch() {
+    curl -fsSL --retry 5 --retry-all-errors --retry-delay 3 -m 300 -o "$2" "$1" \
+        || {
+            rm -f "$2"
+            note "fetch $1"
+        }
+}
+
+apt_get update || note "apt update"
+apt_install gcc time unzip curl
+
+apt_get install nsjail > /dev/null 2>&1
+if ! command -v nsjail > /dev/null; then
+    apt_install autoconf bison flex g++ git libprotobuf-dev libnl-route-3-dev \
+        libtool make pkg-config protobuf-compiler
+    # shellcheck disable=SC2015
+    git clone --depth 1 --branch ${nsjail_version} \
+        https://github.com/google/nsjail /tmp/nsjail \
+        && make -C /tmp/nsjail \
+        && install -m755 /tmp/nsjail/nsjail /usr/local/bin/nsjail \
+        || note "nsjail ${nsjail_version}"
+fi
+
+echo 'kernel.apparmor_restrict_unprivileged_userns = 0' > /etc/sysctl.d/99-oj-userns.conf
+sysctl -p /etc/sysctl.d/99-oj-userns.conf
+
+if ! command -v aws > /dev/null; then
+    fetch https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip /tmp/awscliv2.zip
+    unzip -q -o /tmp/awscliv2.zip -d /tmp/awscliv2
+    /tmp/awscliv2/aws/install
+fi
+
+fetch https://builds.hex.pm/builds/otp/amd64/ubuntu-24.04/OTP-${otp_version}.tar.gz \
+    /tmp/otp.tar.gz
+mkdir -p /usr/local/lib/erlang
+tar -xzf /tmp/otp.tar.gz -C /usr/local/lib/erlang --strip-components=1
+(cd /usr/local/lib/erlang && ./Install -minimal /usr/local/lib/erlang)
+ln -sf /usr/local/lib/erlang/bin/erl /usr/local/bin/erl
+
+mkdir -p /opt/oj
+aws s3 cp "s3://${bucket}/${object_key}" /tmp/oj-ship.zip \
+    || note "s3 ${object_key}"
+unzip -q -o /tmp/oj-ship.zip -d /opt/oj
+chmod +x /opt/oj/bin/*
+
+imds=$(curl -sfX PUT http://169.254.169.254/latest/api/token \
+    -H "X-aws-ec2-metadata-token-ttl-seconds: 300")
+iid=$(curl -sf -H "X-aws-ec2-metadata-token: $imds" \
+    http://169.254.169.254/latest/meta-data/instance-id)
+[[ -n $iid ]] || note "imds instance-id"
+
+cat > /etc/oj.env << 'EOF'
+AWS_REGION=${region}
+OJ_TABLE=${table}
+OJ_RUNNERS=${runners}
+OJ_TOKEN=${token}
+OJ_TL_MS=${tl_ms}
+OJ_DELAY_MS=${delay_ms}
+OJ_FIS_TEMPLATES=${fis_templates}
+OJ_BUILD=${bundle_hash}
+EOF
+[[ -z $iid ]] || echo "OJ_OWNER=$iid" >> /etc/oj.env
+
+cat > /etc/systemd/system/oj.service << 'EOF'
+[Unit]
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=0
+
+[Service]
+EnvironmentFile=/etc/oj.env
+WorkingDirectory=/opt/oj
+ExecStart=/opt/oj/bin/run
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+EOF
+systemctl daemon-reload
+systemctl enable --now oj.service
+
+{
+    echo "owner   $iid"
+    for t in unzip curl aws erl; do
+        echo "tool    $(command -v "$t" || echo "$t MISSING")"
+    done
+    echo "otp     $(erl -noshell -eval 'io:format("~s",[erlang:system_info(otp_release)]),halt().' 2> /dev/null || echo MISSING)"
+    echo "json    $(erl -noshell -eval 'io:format("~s",[json:encode(#{<<"probe">> => [1,true,null]})]),halt().' 2> /dev/null || echo MISSING)"
+    echo "beam    $(ls -d /opt/oj/lib/oj/ebin 2> /dev/null || echo MISSING)"
+    echo "userns  $(sysctl -n kernel.apparmor_restrict_unprivileged_userns)"
+    sed 's/^/fail    /' "$fail"
+} > /opt/oj/boot.log
+
+set +x
+echo "=== oj boot.log ==="
+cat /opt/oj/boot.log
+echo "=== GET /api/leases ==="
+for _ in {1..10}; do
+    seen=$(curl -fsS -m 3 http://127.0.0.1:8080/api/leases) && break
+    sleep 3
+done
+echo "$seen"
+[[ -n $seen ]] || echo "leases MISSING"
+echo "=== oj.service ==="
+systemctl is-active oj.service
+journalctl -u oj.service -n 15 --no-pager
+echo "=== oj end ==="

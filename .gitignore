@@ -2,3 +2,8 @@
 *.ez
 /build
 erl_crash.dump
+var*/
+
+/aws/.terraform/
+/aws/terraform.tfstate
+/aws/terraform.tfstate.backup
