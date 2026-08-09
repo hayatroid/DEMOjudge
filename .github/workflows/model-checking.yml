@@ -1,0 +1,15 @@
+name: model-checking
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: cachix/install-nix-action@v31
+      - run: nix develop .. --command tlc DEMOjudge.tla
+        working-directory: spec
+      - run: nix develop .. --command tlc Conformance.tla
+        working-directory: spec

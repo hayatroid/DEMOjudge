@@ -20,4 +20,3 @@ jobs:
       - run: bin/check py
       - run: bin/check tf
       - run: bin/check build
-      - run: bin/check spec
