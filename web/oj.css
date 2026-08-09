@@ -115,6 +115,10 @@ summary::-webkit-details-marker { display: none; }
 
 .exit { border-style: dashed; }
 
+/* A compile error exits the band after compiling, so its box sits past that
+   column, under running. */
+#p-ce { grid-column: 3; }
+
 /* The arrow keeps --ink rather than the colour it inherits, so trapping a phase
    does not redden the way out of it. */
 #path .phase:not(:last-child)::after {

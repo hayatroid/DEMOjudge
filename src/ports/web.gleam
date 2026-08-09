@@ -124,11 +124,7 @@ fn route(
         ])
       })
     "POST", "/api/trap" ->
-      guarded(socket, token, fn() { trap(views, socket, ask) })
-    "POST", "/api/kill" ->
-      guarded(socket, token, fn() { fell(config, views, socket, ask) })
-    "POST", "/api/stop" ->
-      guarded(socket, token, fn() { strike(socket, ask, fleet.stop) })
+      guarded(socket, token, fn() { trap(config, views, socket, ask) })
     "GET", _ ->
       case named(path) {
         True -> asset(socket, path)
@@ -225,16 +221,13 @@ fn traps() -> Json {
 }
 
 fn trap(
+  config: Config,
   views: Name(reader.Msg),
   socket: Socket,
   ask: fn(String) -> String,
 ) -> Nil {
   let trap = ask("trap")
   let submission = ask("submission")
-  let fire = case ask("fire") {
-    "kill" -> "kill"
-    _ -> "stop"
-  }
   case fold.parse(trap), list.key_find(trap_list(), trap) {
     Error(_), _ ->
       answer(socket, 409, O([#("error", S("reject unknown-phase"))]))
@@ -248,21 +241,17 @@ fn trap(
       trap_set(trap, submission)
       process.spawn(fn() {
         trapping(
+          config,
           views,
           wanted(submission),
           phase,
-          fire,
           watch_limit_ms / watch_ms,
         )
       })
       answer(
         socket,
         202,
-        O([
-          #("trap", S(trap)),
-          #("submission", S(submission)),
-          #("fire", S(fire)),
-        ]),
+        O([#("trap", S(trap)), #("submission", S(submission))]),
       )
     }
   }
@@ -276,10 +265,10 @@ fn wanted(submission: String) -> Wanted {
 }
 
 fn trapping(
+  config: Config,
   views: Name(reader.Msg),
   wanted: Wanted,
   phase: fold.Phase,
-  fire: String,
   fuel: Int,
 ) -> Nil {
   let trap = fold.word(phase)
@@ -290,17 +279,28 @@ fn trapping(
       case trapped(reader.hosts(views, phase), wanted) {
         Ok(id) -> {
           trap_clear(trap)
-          let _ = case fire {
-            "kill" -> fleet.kill(id)
-            _ -> fleet.stop(id)
+          case fleet.local(id) {
+            // A lone node has no fleet to shoot; its writer falls instead,
+            // and rest_for_one folds the runner with it.
+            True -> down(config)
+            False -> {
+              let _ = fleet.stop(id)
+              Nil
+            }
           }
-          Nil
         }
         Error(_) -> {
           process.sleep(watch_ms)
-          trapping(views, wanted, phase, fire, fuel - 1)
+          trapping(config, views, wanted, phase, fuel - 1)
         }
       }
+  }
+}
+
+fn down(config: Config) -> Nil {
+  case process.named(config.names.writer) {
+    Ok(pid) -> process.kill(pid)
+    Error(_) -> Nil
   }
 }
 
@@ -311,65 +311,6 @@ fn trapped(
   case wanted {
     Any -> list.first(list.map(hosts, fn(one) { one.1 }))
     One(submission) -> list.key_find(hosts, submission)
-  }
-}
-
-fn fell(
-  config: Config,
-  views: Name(reader.Msg),
-  socket: Socket,
-  ask: fn(String) -> String,
-) -> Nil {
-  case ask("child") {
-    "" -> strike(socket, ask, fleet.kill)
-    "writer" as child ->
-      collapse(socket, child, process.named(config.names.writer))
-    "runner" as child ->
-      case config.names.runner {
-        Some(name) -> collapse(socket, child, process.named(name))
-        None -> answer(socket, 409, O([#("error", S("reject unknown-runner"))]))
-      }
-    "reader" as child -> collapse(socket, child, process.named(views))
-    _ -> answer(socket, 409, O([#("error", S("reject malformed"))]))
-  }
-}
-
-// The answer is written first because the shot can take down the process
-// serving it.
-fn collapse(
-  socket: Socket,
-  child: String,
-  found: Result(process.Pid, Nil),
-) -> Nil {
-  case found {
-    Error(_) -> answer(socket, 409, O([#("error", S("reject malformed"))]))
-    Ok(pid) -> {
-      answer(socket, 202, O([#("child", S(child))]))
-      process.kill(pid)
-    }
-  }
-}
-
-fn strike(
-  socket: Socket,
-  ask: fn(String) -> String,
-  shoot: fn(String) -> Result(String, String),
-) -> Nil {
-  case targeted(ask) {
-    Error(_) -> answer(socket, 409, O([#("error", S("reject unknown-host"))]))
-    Ok(id) ->
-      case shoot(id) {
-        Ok(_) -> answer(socket, 202, O([#("host", S(id))]))
-        Error(reason) -> answer(socket, 409, O([#("error", S(reason))]))
-      }
-  }
-}
-
-fn targeted(ask: fn(String) -> String) -> Result(String, Nil) {
-  case ask("host"), ask("runner") {
-    "", "" -> Error(Nil)
-    "", runner -> fleet.host_for(runner)
-    id, _ -> Ok(id)
   }
 }
 

@@ -17,11 +17,10 @@ pub fn host_of(owner: String) -> Result(String, Nil) {
   }
 }
 
-pub fn host_for(runner: String) -> Result(String, Nil) {
-  case list.filter(runners(), fn(one) { one.runner == runner }) {
-    [one, ..] -> Ok(one.host)
-    [] -> Error(Nil)
-  }
+/// The discover fallback names this node itself; a shot at it cannot go
+/// through aws, so the caller takes it in process.
+pub fn local(host: String) -> Bool {
+  host == os.getenv("OJ_OWNER", "local")
 }
 
 pub fn runners() -> List(Runner) {
@@ -57,13 +56,9 @@ fn discover() -> List(Runner) {
       }
     })
   case found {
-    [] -> [Runner("runner-0", os.getenv("OJ_OWNER", "local"), "running")]
+    [] -> [Runner("judge-0", os.getenv("OJ_OWNER", "local"), "running")]
     known -> known
   }
-}
-
-pub fn kill(host: String) -> Result(String, String) {
-  fire(host, kill_command)
 }
 
 pub fn stop(host: String) -> Result(String, String) {
@@ -75,18 +70,6 @@ fn fire(host: String, command: fn(String) -> String) -> Result(String, String) {
     False -> Error("reject malformed")
     True -> shot(command(host))
   }
-}
-
-fn kill_command(host: String) -> String {
-  "aws ssm send-command --region "
-  <> region()
-  <> " --instance-ids "
-  <> host
-  <> " --document-name AWS-RunShellScript"
-  <> " --parameters commands='systemctl stop oj ; sleep "
-  <> os.getenv("OJ_KILL_SECONDS", "60")
-  <> " ; systemctl start oj'"
-  <> " --query 'Command.CommandId' --output text 2>&1"
 }
 
 fn stop_command(host: String) -> String {

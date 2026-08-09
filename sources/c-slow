@@ -1,0 +1,31 @@
+#include <stdio.h>
+#include <time.h>
+
+/* The answer of c-ac, held for most of the time limit: a case burns wall
+ * clock so that a judged run outlives the latency of an infrastructure
+ * shot. bin/stage stages this one. */
+int main(void) {
+    long long a, b;
+    scanf("%lld %lld", &a, &b);
+    long long best = 0;
+    for (long long n = a; n <= b; n++) {
+        long long x = n;
+        long long steps = 0;
+        while (x != 1) {
+            x = x % 2 == 0 ? x / 2 : 3 * x + 1;
+            steps++;
+        }
+        if (steps > best) {
+            best = steps;
+        }
+    }
+    struct timespec from, now;
+    clock_gettime(CLOCK_MONOTONIC, &from);
+    do {
+        clock_gettime(CLOCK_MONOTONIC, &now);
+    } while ((now.tv_sec - from.tv_sec) * 1000
+                 + (now.tv_nsec - from.tv_nsec) / 1000000
+             < 1800);
+    printf("%lld\n", best);
+    return 0;
+}

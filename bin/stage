@@ -27,16 +27,6 @@ hosts() {
 print(*sorted(one["host"] for one in json.load(sys.stdin).values()
               if one["state"] == "running"))' <<< "$seen"
 }
-holder_of() {
-    local seen
-    seen=$(ask leases)
-    python3 -c 'import json, sys
-held = [one["host"] for one in json.load(sys.stdin).values()
-        if one["submission"] == sys.argv[1]]
-if not held:
-    sys.exit(1)
-print(held[0])' "$1" <<< "$seen"
-}
 inside() {
     local id=$1 line=$2 cmd
     cmd=$(aws ssm send-command --instance-ids "$id" --document-name AWS-RunShellScript \
@@ -94,27 +84,50 @@ for id in "${runners[@]}"; do
     settled "$submission"
 done
 
+# c-slow holds each case for most of the time limit, so a judged run outlives
+# the latency of an infrastructure shot and cannot complete before it lands.
 answer=$(curl -sf --max-time 10 -X POST -H "X-OJ-Token: $token" "$api/api/submit" \
     --data-urlencode user=stuck --data-urlencode problem=c \
-    --data-urlencode "source@$root/sources/c-ac") || die "$api/api/submit did not answer"
+    --data-urlencode "source@$root/sources/c-slow") || die "$api/api/submit did not answer"
 piece=$(named <<< "$answer") || die "submit was rejected: $answer"
 
-deadline=$((SECONDS + 300))
+# A trap is the only exposed shot; keeping one armed on the running phase
+# fells whichever node picks the piece up, until the allowance runs out.
+arm() {
+    case $(ask traps) in
+        *running*) ;;
+        *)
+            curl -sf --max-time 5 -X POST -H "X-OJ-Token: $token" \
+                "$api/api/trap" -d trap=running -d "submission=$piece" \
+                > /dev/null || die "$api/api/trap did not answer"
+            ;;
+    esac
+}
+
+# fis starts a felled box again two minutes after the shot, and booting back
+# to a serving node takes up to another minute.
+revival=180
+
+# Each of the three allowed attempts is bounded by one revival.
+deadline=$((SECONDS + 3 * revival))
 while [[ $(phase_of "$piece") != escalated ]]; do
     [[ $SECONDS -lt $deadline ]] || die "$piece is $(phase_of "$piece"), not escalated"
-    holder=$(holder_of "$piece") || {
-        sleep 1
-        continue
-    }
-    # shellcheck disable=SC2016
-    inside "$holder" '. /etc/oj.env
-        curl -s -X POST http://127.0.0.1:8080/api/kill \
-            -H "X-OJ-Token: $OJ_TOKEN" -d child=writer' > /dev/null
+    arm
+    sleep 2
 done
+case $(ask traps) in
+    *running*) curl -sf --max-time 5 -X POST -H "X-OJ-Token: $token" \
+        "$api/api/trap" -d trap=running > /dev/null || true ;;
+esac
 
 escalations=$(ask escalations)
 [[ $escalations != '[]' ]] || die "the escalations table is empty"
-seen=$(hosts)
 want=$(terraform -chdir="$root/aws" output -json instance_ids \
     | python3 -c 'import json, sys; print(*sorted(json.load(sys.stdin)))')
-[[ $seen = "$want" ]] || die "the leases view stands $seen, terraform names $want"
+# The last felled box needs one more revival to stand again.
+deadline=$((SECONDS + revival))
+until [[ $(hosts) = "$want" ]]; do
+    [[ $SECONDS -lt $deadline ]] \
+        || die "the leases view stands $(hosts), terraform names $want"
+    sleep 5
+done

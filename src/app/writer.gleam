@@ -8,6 +8,7 @@ import domain/submission/command
 import domain/submission/event.{type Event, type Submission}
 import domain/submission/fold
 import gleam/erlang/process.{type Name, type Subject}
+import gleam/int
 import gleam/list
 import gleam/option.{type Option, None, Some}
 import gleam/otp/actor
@@ -115,6 +116,16 @@ pub fn idle(config: Config) -> Bool {
 
 pub fn start(config: Config) -> actor.StartResult(Subject(Msg)) {
   actor.new_with_initialiser(60_000, fn(self) {
+    // A lease dies with the writer that took it: each incarnation signs with
+    // its own name, so a restarted writer waits out its predecessor's lease
+    // like any other node instead of taking it back at once.
+    let config =
+      Config(
+        ..config,
+        store: store.open(
+          store.owner(config.store) <> "#" <> int.to_string(os.now_ms()),
+        ),
+      )
     process.send_after(self, config.tick_ms, Tick)
     log.follow(config.store, config.tick_ms, fn() {
       process.send(subject(config), Wake)

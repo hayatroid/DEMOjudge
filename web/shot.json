@@ -1,0 +1,28 @@
+{
+  "phases": {
+    "alice-a-1": "completed",
+    "bob-a-1": "completed",
+    "bob-a-2": "completed",
+    "carol-a-1": "queued"
+  },
+  "leases": {
+    "judge-0": { "host": "i-079d8433f0b3edf46", "state": "running", "submission": null, "leased_until": 0 },
+    "judge-1": { "host": "i-07f24d6e6e92409ad", "state": "running", "submission": null, "leased_until": 0 }
+  },
+  "traps": [],
+  "standings": {
+    "rows": [
+      { "rank": 1, "user": "alice", "solved": 1, "penalty": 0 },
+      { "rank": 2, "user": "bob", "solved": 0, "penalty": 1 }
+    ]
+  },
+  "escalations": [],
+  "events": [
+    { "seq": 1, "event": "SubmissionReceived", "submission": "alice-a-1", "attempt": 0, "at": "1786236128533", "lang": "c" },
+    { "seq": 6, "event": "JudgmentCompleted", "submission": "alice-a-1", "attempt": 1, "verdict": "AC", "-": "-" },
+    { "seq": 11, "event": "JudgmentCompleted", "submission": "bob-a-1", "attempt": 1, "verdict": "WA", "-": "-" },
+    { "seq": 15, "event": "JudgmentCompleted", "submission": "bob-a-2", "attempt": 1, "verdict": "CE", "-": "-" },
+    { "seq": 16, "event": "SubmissionReceived", "submission": "carol-a-1", "attempt": 0, "at": "1786243000000", "lang": "c" },
+    { "seq": 17, "event": "AttemptLeased", "submission": "carol-a-1", "attempt": 1, "runner": "i-07f24d6e6e92409ad", "until": "1786243015000" }
+  ]
+}

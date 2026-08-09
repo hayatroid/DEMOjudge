@@ -22,6 +22,11 @@
             pkgs.ruff
             pkgs.shellcheck
             pkgs.shfmt
+            # A local node with OJ_RUNNERS=1 judges in a sandbox; bin/check
+            # needs none of these.
+            pkgs.nsjail
+            pkgs.gcc
+            pkgs.time
           ];
         };
       });

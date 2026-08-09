@@ -52,13 +52,18 @@ const runnerOf = (leases, submission) => {
   return "";
 };
 
+/* A crash belongs to the phase it interrupted: once the piece falls back to
+   queued it reads like any queued piece, symmetric with completed. */
+const HELD = new Set(["compiling", "running", "ce"]);
+
 const struck = (m) => {
   const dead = {};
   let word = m.word;
   for (const submission of Object.keys(m.phases)) {
     const runner = runnerOf(m.leases, submission);
     const one = runner ? m.leases[runner] : null;
-    dead[submission] = one !== null && one.state !== "running";
+    dead[submission] =
+      HELD.has(m.phases[submission]) && one !== null && one.state !== "running";
     if (dead[submission] && !m.dead[submission]) {
       word = { submission: submission, text: "Crash", fade: false, gone: false };
     }
@@ -200,14 +205,16 @@ const madeSubmission = () => {
 };
 
 const drawSubmission = (m, li, one) => {
-  const runner = runnerOf(m.leases, one.submission);
+  const runner = HELD.has(m.phases[one.submission])
+    ? runnerOf(m.leases, one.submission)
+    : "";
   const attempt = m.attempts[one.submission] ?? 0;
   const dead = Boolean(m.dead[one.submission]);
   const until = dead && runner ? m.leases[runner].leased_until : 0;
   li.dataset.seq = String(one.place);
   need(".name", li).textContent = one.submission;
   need("small", li).textContent =
-    (runner ? runner + " " : "") + (attempt ? "attempt " + attempt : "");
+    (runner ? runner + " " : "") + "attempt " + attempt;
   li.classList.toggle("dead", dead);
   const clock = need(".clock", li);
   clock.hidden = !until;
@@ -475,12 +482,51 @@ const dispatch = (msg) => {
   draw();
 };
 
-const src = new EventSource("/api/events");
-
-for (const name of Object.keys(EVOLVE)) {
-  src.addEventListener(name, (e) => {
-    dispatch({ kind: "frame", name: name, seen: JSON.parse(e.data) });
-  });
+/* A shot is a canned sheet for screenshots: ?shot=shot.json renders it through
+   the same frames the live feed uses, and the page never connects. */
+const shot = new URLSearchParams(location.search).get("shot");
+if (shot) {
+  /* A shot must render the same on any box, so the families are pinned to
+     fonts a capture environment can carry along. */
+  document.body.style.setProperty(
+    "font-family",
+    '"Noto Sans", sans-serif',
+    "important",
+  );
+  document.documentElement.style.setProperty(
+    "--mono",
+    '"DejaVu Sans Mono", monospace',
+  );
+  fetch(shot)
+    .then((answer) => answer.json())
+    .then((sheet) => {
+      for (const line of sheet.events ?? []) {
+        dispatch({ kind: "frame", name: "events", seen: line });
+      }
+      for (const name of Object.keys(EVOLVE)) {
+        if (name !== "events" && sheet[name]) {
+          dispatch({ kind: "frame", name: name, seen: sheet[name] });
+        }
+      }
+      if (sheet.entry) {
+        need("#user").value = sheet.entry.user ?? "";
+        dispatch({
+          kind: "problem",
+          problem: sheet.entry.problem ?? "a",
+          source: sheet.entry.source ?? "",
+        });
+      }
+      const page = sheet.page ?? "phases";
+      need("#page-" + page).checked = true;
+      dispatch({ kind: "page", page: page });
+    });
+} else {
+  const src = new EventSource("/api/events");
+  for (const name of Object.keys(EVOLVE)) {
+    src.addEventListener(name, (e) => {
+      dispatch({ kind: "frame", name: name, seen: JSON.parse(e.data) });
+    });
+  }
 }
 
 /* The server reads a body only where it is form-urlencoded, so the fields go out

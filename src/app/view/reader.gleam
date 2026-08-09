@@ -122,12 +122,18 @@ fn on_message(rt: Runtime, msg: Msg) -> actor.Next(Runtime, Msg) {
     }
     Phases(reply) -> {
       let rt = catch_up(rt)
-      process.send(reply, phases.phases(rt.state))
+      process.send(
+        reply,
+        phases.phases(rt.state, store.peek(rt.store), os.now_ms()),
+      )
       actor.continue(rt)
     }
     Leases(reply) -> {
       let rt = catch_up(rt)
-      process.send(reply, leases_of(rt))
+      process.send(
+        reply,
+        leases.holdings(rt.state, store.peek(rt.store), fleet.runners()),
+      )
       actor.continue(rt)
     }
     Conformance(reply) -> {
@@ -162,21 +168,18 @@ fn catch_up(rt: Runtime) -> Runtime {
   })
 }
 
+// The lease item and the fleet are not on the log, so the views that need them
+// read the store and the fleet directly.
 fn sheet_of(rt: Runtime, from: Int) -> Views {
+  let peek = store.peek(rt.store)
   Views(
     seq: rt.state.seq,
     events: list.drop(list.reverse(rt.reversed), from),
-    phases: phases.phases(rt.state),
-    leases: leases_of(rt),
+    phases: phases.phases(rt.state, peek, os.now_ms()),
+    leases: leases.holdings(rt.state, peek, fleet.runners()),
     standings: standings.standings(rt.score),
     escalations: escalations.escalations(rt.escalation),
   )
-}
-
-// The lease item and the fleet are not on the log, so the views that need them
-// read the store and the fleet directly.
-fn leases_of(rt: Runtime) -> List(leases.Holding) {
-  leases.holdings(rt.state, store.peek(rt.store), fleet.runners())
 }
 
 fn conformance_of(rt: Runtime) -> Json {
