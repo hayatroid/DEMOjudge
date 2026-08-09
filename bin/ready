@@ -82,7 +82,6 @@ cat << 'EOF'
     terraform -chdir=aws init
     terraform -chdir=aws apply
     api=$(terraform -chdir=aws output -raw api_url)
-    until curl -sf "$api/" > /dev/null; do sleep 10; done    # a box's serial console shows boot.log
-    bin/stage
-    terraform -chdir=aws destroy
+    until curl -sf "$api/" > /dev/null; do sleep 10; done
+    echo "$api/login?token=$(terraform -chdir=aws output -raw token)"
 EOF
